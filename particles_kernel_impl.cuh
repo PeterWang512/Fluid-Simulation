@@ -219,6 +219,173 @@ void reorderDataAndFindCellStartD(uint   *cellStart,        // output: cell star
 
 }
 
+
+__device__
+void lambdaCell(int3    gridPos,
+		        uint    index,
+		        float3  pos,
+		        float4 *oldPos,
+		        uint   *cellStart,
+		        uint   *cellEnd,
+		        float  *rho_i,
+		        float3 *grad,
+		        float  *denom)
+{
+    uint gridHash = calcGridHash(gridPos);
+
+    // get start of bucket for this cell
+    uint startIndex = FETCH(cellStart, gridHash);
+
+    if (startIndex != 0xffffffff)          // cell is not empty
+    {
+        // iterate over particles in this cell
+        uint endIndex = FETCH(cellEnd, gridHash);
+
+        for (uint j=startIndex; j<endIndex; j++)
+        {
+        	float3 pos2 = make_float3(FETCH(oldPos, j));
+
+			// relative position
+			float3 relPos = pos - pos2;
+			float dist = length(relPos);
+			float3 unit = relPos / dist;
+
+			float h = params.h;
+
+			float3 g = make_float3(0.0f);
+
+			if (dist <= h) {
+				// calculate rho
+				*rho_i += 315.0f / (64.0f * CUDART_PI_F * pow(h, 9)) * pow(h*h-dist*dist, 3);
+
+				// calculate gradient
+				g = - 45.0f / (CUDART_PI_F * pow(h, 6)) * pow(h-dist, 2) * unit;
+				*grad += g;
+
+				// check not colliding with self
+				if (j != index)
+					*denom += dot(g, g);
+			}
+        }
+    }
+}
+
+
+__global__
+void lambdaD(float  *lambda,
+			 float4 *oldPos,
+			 uint   *cellStart,
+			 uint   *cellEnd,
+			 uint    numParticles)
+{
+	uint index = __mul24(blockIdx.x,blockDim.x) + threadIdx.x;
+
+	if (index >= numParticles) return;
+
+	// read particle data from sorted arrays
+	float3 pos = make_float3(FETCH(oldPos, index));
+
+	// get address in grid
+	int3 gridPos = calcGridPos(pos);
+
+	float rho_0 = params.rest_density;
+
+	float rho_i = 0.0f;
+	float3 grad = make_float3(0.0f);
+	float denom = 0.0f;
+
+	for (int z=-1; z<=1; z++)
+	{
+		for (int y=-1; y<=1; y++)
+		{
+			for (int x=-1; x<=1; x++)
+			{
+				int3 neighbourPos = gridPos + make_int3(x, y, z);
+				lambdaCell(neighbourPos, index, pos, oldPos, cellStart, cellEnd, &rho_i, &grad, &denom);
+			}
+		}
+	}
+	denom += dot(grad, grad);
+	lambda[index] = -(rho_i / rho_0 - 1.0f) / (denom/rho_0/rho_0 + params.eps);
+}
+
+__device__
+void deltaPCell(float  *lambda,
+		        int3    gridPos,
+		        uint    index,
+		        float3  pos,
+		        float4 *oldPos,
+		        uint   *cellStart,
+		        uint   *cellEnd,
+		        float3 *dp)
+{
+    uint gridHash = calcGridHash(gridPos);
+
+    // get start of bucket for this cell
+    uint startIndex = FETCH(cellStart, gridHash);
+
+    if (startIndex != 0xffffffff)          // cell is not empty
+    {
+        // iterate over particles in this cell
+        uint endIndex = FETCH(cellEnd, gridHash);
+
+        for (uint j=startIndex; j<endIndex; j++)
+        {
+        	float3 pos2 = make_float3(FETCH(oldPos, j));
+
+			// relative position
+			float3 relPos = pos - pos2;
+			float dist = length(relPos);
+			float3 unit = relPos / dist;
+
+			float h = params.h;
+			float li = FETCH(lambda, index);
+			float lj = FETCH(lambda, j);
+
+			if (dist <= h) {
+				// calculate gradient
+				*dp += - (li+lj) * 45.0f / (CUDART_PI_F * pow(h, 6)) * pow(h-dist, 2) * unit;
+			}
+        }
+    }
+}
+
+__global__
+void deltaP_D(float  *lambda,
+		      float3 *delta_p,
+		      float4 *oldPos,
+		      uint   *cellStart,
+		      uint   *cellEnd,
+		      uint    numParticles)
+{
+	uint index = __mul24(blockIdx.x,blockDim.x) + threadIdx.x;
+
+	if (index >= numParticles) return;
+
+	// read particle data from sorted arrays
+	float3 pos = make_float3(FETCH(oldPos, index));
+
+	// get address in grid
+	int3 gridPos = calcGridPos(pos);
+
+	float3 dp = make_float3(0.0f);
+
+	for (int z=-1; z<=1; z++)
+	{
+		for (int y=-1; y<=1; y++)
+		{
+			for (int x=-1; x<=1; x++)
+			{
+				int3 neighbourPos = gridPos + make_int3(x, y, z);
+				deltaPCell(lambda, neighbourPos, index, pos, oldPos, cellStart, cellEnd, &dp);
+			}
+		}
+	}
+
+	delta_p[index] = dp / params.rest_density;
+}
+
+
 // collide two spheres using DEM method
 __device__
 float3 collideSpheres(float3 posA, float3 posB,
@@ -300,10 +467,10 @@ float3 collideCell(int3    gridPos,
 
 
 __global__
-void collideD(float4 *newVel,               // output: new velocity
+void collideD(float delta_t,
+		      float4 *newVel,               // output: new velocity
               float4 *oldPos,               // input: sorted positions
               float4 *oldVel,               // input: sorted velocities
-              uint   *gridParticleIndex,    // input: sorted particle indices
               uint   *cellStart,
               uint   *cellEnd,
               uint    numParticles)
@@ -338,8 +505,44 @@ void collideD(float4 *newVel,               // output: new velocity
     force += collideSpheres(pos, params.colliderPos, vel, make_float3(0.0f, 0.0f, 0.0f), params.particleRadius, params.colliderRadius, 0.0f);
 
     // write new velocity back to original unsorted location
-    uint originalIndex = gridParticleIndex[index];
-    newVel[originalIndex] = make_float4(vel + force, 0.0f);
+    oldPos[index] = make_float4(pos + (vel+force) * delta_t, 1.0f);
+
+//    uint originalIndex = gridParticleIndex[index];
+//    newVel[originalIndex] = make_float4(vel + force, 0.0f);
+}
+
+
+__global__
+void update_positionD(float4 *oldPos, float3 *delta_p, uint numParticles)
+{
+	uint index = __mul24(blockIdx.x,blockDim.x) + threadIdx.x;
+
+	if (index >= numParticles) return;
+
+	// read particle data from sorted arrays
+	float3 pos = make_float3(FETCH(oldPos, index));
+	float3 dp  = FETCH(delta_p, index);
+	oldPos[index] = make_float4(pos + dp, 1.0f);
+}
+
+__global__
+void update_velocityD(float   delta_t,
+				     float4 *oldPos,
+				     float4 *sortedPos,
+				     float4 *vel,
+				     uint   *gridParticleIndex,    // input: sorted particle indices
+				     uint    numParticles)
+{
+	uint index = __mul24(blockIdx.x,blockDim.x) + threadIdx.x;
+
+	if (index >= numParticles) return;
+
+	// read particle data from sorted arrays
+	float3 pos = make_float3(FETCH(sortedPos, index));
+
+	uint originalIndex = gridParticleIndex[index];
+	float3 o_pos = make_float3(FETCH(oldPos, originalIndex));
+	vel[originalIndex] = make_float4((pos - o_pos) / delta_t, 0.0f);
 }
 
 #endif

@@ -78,6 +78,7 @@ ParticleSystem::ParticleSystem(uint numParticles, uint3 gridSize, bool bUseOpenG
     // new params
     m_params.rest_density = 32768.0f;
     m_params.h = 1.0f;
+    m_params.eps = 0.00001f;
 
     _initialize(numParticles);
 }
@@ -164,7 +165,7 @@ ParticleSystem::_initialize(int numParticles)
     allocateArray((void **)&m_dOldPos, memSize);
 
     allocateArray((void **)&lambda, memSize/4);
-    allocateArray((void **)&delta_p, memSize);
+    allocateArray((void **)&delta_p, memSize*3/4);
 
     allocateArray((void **)&m_dSortedPos, memSize);
     allocateArray((void **)&m_dSortedVel, memSize);
@@ -305,22 +306,44 @@ ParticleSystem::update(float deltaTime)
         m_numGridCells);
 
     // enforce incompressibility
-//    calcLambda(
-//    		m_dSortedPos,
-//    		m_dCellStart,
-//    		m_dCellEnd,
-//    		)
+    calcLambda(
+    		lambda,
+    		m_dSortedPos,
+    		m_dCellStart,
+    		m_dCellEnd,
+    		m_numParticles);
+
+    // calculate delta_p
+    calcDeltaP(
+    		lambda,
+    		delta_p,
+    		m_dSortedPos,
+    		m_dCellStart,
+    		m_dCellEnd,
+    		m_numParticles);
+
 
     // process collisions
     collide(
+        deltaTime,
         m_dVel,
         m_dSortedPos,
         m_dSortedVel,
-        m_dGridParticleIndex,
         m_dCellStart,
         m_dCellEnd,
         m_numParticles,
         m_numGridCells);
+
+    // update positions
+    update_position(m_dSortedPos, delta_p, m_numParticles);
+
+    // update velocity
+    update_velocity(deltaTime,
+    		        m_dOldPos,
+    		        m_dSortedPos,
+    		        m_dVel,
+    		        m_dGridParticleIndex,
+    		        m_numParticles);
 
     // note: do unmap at end here to avoid unnecessary graphics/CUDA context switch
     if (m_bUseOpenGL)

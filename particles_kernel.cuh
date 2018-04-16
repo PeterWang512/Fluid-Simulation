@@ -50,6 +50,7 @@ struct SimParams
     // new params
     float rest_density;
     float h;
+    float eps;
 };
 
 #endif

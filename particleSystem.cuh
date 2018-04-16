@@ -50,14 +50,43 @@ extern "C"
                                      uint   numParticles,
                                      uint   numCells);
 
-    void collide(float *newVel,
+    void calcLambda(
+    		float *lambda,
+    		float *sortedPos,
+    		uint  *cellStart,
+    		uint  *cellEnd,
+    		uint   numParticles);
+
+
+    void calcDeltaP(
+    		float *lambda,
+    		float *delta_p,
+    		float *sortedPos,
+    		uint  *cellStart,
+    		uint  *cellEnd,
+    		uint   numParticles);
+
+
+    void collide(float delta_t,
+    		     float *newVel,
                  float *sortedPos,
                  float *sortedVel,
-                 uint  *gridParticleIndex,
                  uint  *cellStart,
                  uint  *cellEnd,
                  uint   numParticles,
                  uint   numCells);
+
+
+    void update_position(float *sortedPos, float *delta_p, uint numParticles);
+
+
+    void update_velocity(float delta_t,
+    		             float *oldPos,
+    		             float *sortedPos,
+    		             float *vel,
+    		             uint  *gridParticleIndex,    // input: sorted particle indices
+    		             uint   numParticles);
+
 
     void sortParticles(uint *dGridParticleHash, uint *dGridParticleIndex, uint numParticles);
 
