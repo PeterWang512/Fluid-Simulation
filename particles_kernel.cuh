@@ -46,6 +46,10 @@ struct SimParams
     float shear;
     float attraction;
     float boundaryDamping;
+
+    // new params
+    float rest_density;
+    float h;
 };
 
 #endif

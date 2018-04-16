@@ -151,6 +151,7 @@ class ParticleSystem
         // CPU data
         float *m_hPos;              // particle positions
         float *m_hVel;              // particle velocities
+        float *m_hOldPos;
 
         uint  *m_hParticleHash;
         uint  *m_hCellStart;
@@ -160,6 +161,9 @@ class ParticleSystem
         float *m_dPos;
         float *m_dVel;
         float *m_dOldPos;
+
+        float *lambda;
+        float *delta_p;
 
         float *m_dSortedPos;
         float *m_dSortedVel;

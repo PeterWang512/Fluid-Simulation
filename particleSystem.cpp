@@ -37,6 +37,7 @@ ParticleSystem::ParticleSystem(uint numParticles, uint3 gridSize, bool bUseOpenG
     m_bInitialized(false),
     m_bUseOpenGL(bUseOpenGL),
     m_numParticles(numParticles),
+    m_hOldPos(0),
     m_hPos(0),
     m_hVel(0),
     m_dOldPos(0),
@@ -73,6 +74,10 @@ ParticleSystem::ParticleSystem(uint numParticles, uint3 gridSize, bool bUseOpenG
 
     m_params.gravity = make_float3(0.0f, -0.0003f, 0.0f);
     m_params.globalDamping = 1.0f;
+
+    // new params
+    m_params.rest_density = 32768.0f;
+    m_params.h = 1.0f;
 
     _initialize(numParticles);
 }
@@ -131,8 +136,10 @@ ParticleSystem::_initialize(int numParticles)
     // allocate host storage
     m_hPos = new float[m_numParticles*4];
     m_hVel = new float[m_numParticles*4];
+    m_hOldPos = new float[m_numParticles*4];
     memset(m_hPos, 0, m_numParticles*4*sizeof(float));
     memset(m_hVel, 0, m_numParticles*4*sizeof(float));
+    memset(m_hOldPos, 0, m_numParticles*4*sizeof(float));
 
     m_hCellStart = new uint[m_numGridCells];
     memset(m_hCellStart, 0, m_numGridCells*sizeof(uint));
@@ -155,6 +162,9 @@ ParticleSystem::_initialize(int numParticles)
 
     allocateArray((void **)&m_dVel, memSize);
     allocateArray((void **)&m_dOldPos, memSize);
+
+    allocateArray((void **)&lambda, memSize/4);
+    allocateArray((void **)&delta_p, memSize);
 
     allocateArray((void **)&m_dSortedPos, memSize);
     allocateArray((void **)&m_dSortedVel, memSize);
@@ -210,11 +220,16 @@ ParticleSystem::_finalize()
 
     delete [] m_hPos;
     delete [] m_hVel;
+    delete [] m_hOldPos;
     delete [] m_hCellStart;
     delete [] m_hCellEnd;
 
     freeArray(m_dVel);
     freeArray(m_dOldPos);
+
+    freeArray(lambda);
+    freeArray(delta_p);
+
     freeArray(m_dSortedPos);
     freeArray(m_dSortedVel);
 
@@ -289,6 +304,13 @@ ParticleSystem::update(float deltaTime)
         m_numParticles,
         m_numGridCells);
 
+    // enforce incompressibility
+//    calcLambda(
+//    		m_dSortedPos,
+//    		m_dCellStart,
+//    		m_dCellEnd,
+//    		)
+
     // process collisions
     collide(
         m_dVel,
@@ -338,12 +360,14 @@ ParticleSystem::dumpParticles(uint start, uint count)
     // debug
     copyArrayFromDevice(m_hPos, 0, &m_cuda_posvbo_resource, sizeof(float)*4*count);
     copyArrayFromDevice(m_hVel, m_dVel, 0, sizeof(float)*4*count);
+    copyArrayFromDevice(m_hOldPos, m_dOldPos, 0, sizeof(float)*4*count);
 
     for (uint i=start; i<start+count; i++)
     {
         //        printf("%d: ", i);
         printf("pos: (%.4f, %.4f, %.4f, %.4f)\n", m_hPos[i*4+0], m_hPos[i*4+1], m_hPos[i*4+2], m_hPos[i*4+3]);
         printf("vel: (%.4f, %.4f, %.4f, %.4f)\n", m_hVel[i*4+0], m_hVel[i*4+1], m_hVel[i*4+2], m_hVel[i*4+3]);
+        printf("oldpos: (%.4f, %.4f, %.4f, %.4f)\n", m_hOldPos[i*4+0], m_hOldPos[i*4+1], m_hOldPos[i*4+2], m_hOldPos[i*4+3]);
     }
 }
 
