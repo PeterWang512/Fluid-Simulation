@@ -243,29 +243,30 @@ void lambdaCell(int3    gridPos,
 
         for (uint j=startIndex; j<endIndex; j++)
         {
-        	float3 pos2 = make_float3(FETCH(oldPos, j));
+        	// check not colliding with self
+        	if (j != index) {
+				float3 pos2 = make_float3(FETCH(oldPos, j));
 
-			// relative position
-			float3 relPos = pos - pos2;
-			float dist = length(relPos);
-			float3 unit = relPos / dist;
+				// relative position
+				float3 relPos = pos - pos2;
+				float dist = length(relPos);
+				float3 unit = relPos / dist;
 
-			float h = params.h;
+				float h = params.h;
 
-			float3 g = make_float3(0.0f);
+				float3 g = make_float3(0.0f);
 
-			if (dist <= h) {
-				// calculate rho
-				*rho_i += 315.0f / (64.0f * CUDART_PI_F * pow(h, 9)) * pow(h*h-dist*dist, 3);
+				if (dist <= h) {
+					// calculate rho
+					*rho_i += 315.0f / (64.0f * CUDART_PI_F * pow(h, 9)) * pow(h*h-dist*dist, 3);
 
-				// calculate gradient
-				g = - 45.0f / (CUDART_PI_F * pow(h, 6)) * pow(h-dist, 2) * unit;
-				*grad += g;
+					// calculate gradient
+					g = - 45.0f / (CUDART_PI_F * pow(h, 6)) * pow(h-dist, 2) * unit;
+					*grad += g;
 
-				// check not colliding with self
-				if (j != index)
 					*denom += dot(g, g);
-			}
+				}
+        	}
         }
     }
 }
@@ -307,6 +308,8 @@ void lambdaD(float  *lambda,
 	}
 	denom += dot(grad, grad);
 	lambda[index] = -(rho_i / rho_0 - 1.0f) / (denom/rho_0/rho_0 + params.eps);
+//	if (index == 5000)
+//		printf("rho_i %f, denom %f\n", rho_i, denom);
 }
 
 __device__
@@ -331,21 +334,23 @@ void deltaPCell(float  *lambda,
 
         for (uint j=startIndex; j<endIndex; j++)
         {
-        	float3 pos2 = make_float3(FETCH(oldPos, j));
+        	if (j != index) {
+				float3 pos2 = make_float3(FETCH(oldPos, j));
 
-			// relative position
-			float3 relPos = pos - pos2;
-			float dist = length(relPos);
-			float3 unit = relPos / dist;
+				// relative position
+				float3 relPos = pos - pos2;
+				float dist = length(relPos);
+				float3 unit = relPos / dist;
 
-			float h = params.h;
-			float li = FETCH(lambda, index);
-			float lj = FETCH(lambda, j);
+				float h = params.h;
+				float li = FETCH(lambda, index);
+				float lj = FETCH(lambda, j);
 
-			if (dist <= h) {
-				// calculate gradient
-				*dp += - (li+lj) * 45.0f / (CUDART_PI_F * pow(h, 6)) * pow(h-dist, 2) * unit;
-			}
+				if (dist <= h) {
+					// calculate gradient
+					*dp += - (li+lj) * 45.0f / (CUDART_PI_F * pow(h, 6)) * pow(h-dist, 2) * unit;
+				}
+        	}
         }
     }
 }
@@ -378,6 +383,14 @@ void deltaP_D(float  *lambda,
 			{
 				int3 neighbourPos = gridPos + make_int3(x, y, z);
 				deltaPCell(lambda, neighbourPos, index, pos, oldPos, cellStart, cellEnd, &dp);
+//				if (index == 1) {
+//					for (int i = 0; i < numParticles; i++) {
+//						if (lambda[i] != lambda[i])
+//							printf("NaN found\n");
+//					}
+//					printf("dp:\n");
+//					printf("%f %f %f\n", dp.x, dp.y, dp.z);
+//				}
 			}
 		}
 	}
@@ -412,7 +425,9 @@ float3 collideSpheres(float3 posA, float3 posB,
         float3 tanVel = relVel - (dot(relVel, norm) * norm);
 
         // spring force
-        force = -params.spring*(collideDist - dist) * norm;
+        float r = min(collideDist - dist, collideDist/1.2);
+
+        force = -params.spring*(r) * norm;
         // dashpot (damping) force
         force += params.damping*relVel;
         // tangential shear force
@@ -505,7 +520,7 @@ void collideD(float delta_t,
     force += collideSpheres(pos, params.colliderPos, vel, make_float3(0.0f, 0.0f, 0.0f), params.particleRadius, params.colliderRadius, 0.0f);
 
     // write new velocity back to original unsorted location
-    oldPos[index] = make_float4(pos + (vel+force) * delta_t, 1.0f);
+    oldPos[index] = make_float4(pos + force * delta_t, 1.0f);
 
 //    uint originalIndex = gridParticleIndex[index];
 //    newVel[originalIndex] = make_float4(vel + force, 0.0f);

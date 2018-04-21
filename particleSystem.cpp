@@ -76,9 +76,10 @@ ParticleSystem::ParticleSystem(uint numParticles, uint3 gridSize, bool bUseOpenG
     m_params.globalDamping = 1.0f;
 
     // new params
-    m_params.rest_density = 32768.0f;
-    m_params.h = 1.0f;
-    m_params.eps = 0.00001f;
+    m_params.rest_density = 40.0f;
+    m_params.h = 3.5f;
+    m_params.eps = 200.0f;
+    m_params.numIter = 1;
 
     _initialize(numParticles);
 }
@@ -305,37 +306,39 @@ ParticleSystem::update(float deltaTime)
         m_numParticles,
         m_numGridCells);
 
-    // enforce incompressibility
-    calcLambda(
-    		lambda,
-    		m_dSortedPos,
-    		m_dCellStart,
-    		m_dCellEnd,
-    		m_numParticles);
+    for (int i = 0; i < m_params.numIter; i++) {
+		// enforce incompressibility
+		calcLambda(
+				lambda,
+				m_dSortedPos,
+				m_dCellStart,
+				m_dCellEnd,
+				m_numParticles);
 
-    // calculate delta_p
-    calcDeltaP(
-    		lambda,
-    		delta_p,
-    		m_dSortedPos,
-    		m_dCellStart,
-    		m_dCellEnd,
-    		m_numParticles);
+		// calculate delta_p
+		calcDeltaP(
+				lambda,
+				delta_p,
+				m_dSortedPos,
+				m_dCellStart,
+				m_dCellEnd,
+				m_numParticles);
 
 
-    // process collisions
-    collide(
-        deltaTime,
-        m_dVel,
-        m_dSortedPos,
-        m_dSortedVel,
-        m_dCellStart,
-        m_dCellEnd,
-        m_numParticles,
-        m_numGridCells);
+		// process collisions
+		collide(
+			deltaTime,
+			m_dVel,
+			m_dSortedPos,
+			m_dSortedVel,
+			m_dCellStart,
+			m_dCellEnd,
+			m_numParticles,
+			m_numGridCells);
 
-    // update positions
-    update_position(m_dSortedPos, delta_p, m_numParticles);
+		// update positions
+		update_position(m_dSortedPos, delta_p, m_numParticles);
+    }
 
     // update velocity
     update_velocity(deltaTime,
@@ -473,9 +476,9 @@ ParticleSystem::initGrid(uint *size, float spacing, float jitter, uint numPartic
 
                 if (i < numParticles)
                 {
-                    m_hPos[i*4] = (spacing * x) + m_params.particleRadius - 1.0f + (frand()*2.0f-1.0f)*jitter;
-                    m_hPos[i*4+1] = (spacing * y) + m_params.particleRadius - 1.0f + (frand()*2.0f-1.0f)*jitter;
-                    m_hPos[i*4+2] = (spacing * z) + m_params.particleRadius - 1.0f + (frand()*2.0f-1.0f)*jitter;
+                    m_hPos[i*4] = (spacing * x) + m_params.particleRadius + (frand()*2.0f-1.0f)*jitter;
+                    m_hPos[i*4+1] = (spacing * y) + m_params.particleRadius + (frand()*2.0f-1.0f)*jitter;
+                    m_hPos[i*4+2] = (spacing * z) + m_params.particleRadius + (frand()*2.0f-1.0f)*jitter;
                     m_hPos[i*4+3] = 1.0f;
 
                     m_hVel[i*4] = 0.0f;

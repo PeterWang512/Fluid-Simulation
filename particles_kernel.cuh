@@ -51,6 +51,7 @@ struct SimParams
     float rest_density;
     float h;
     float eps;
+    uint numIter;
 };
 
 #endif
