@@ -12,6 +12,8 @@
 #ifndef __RENDER_PARTICLES__
 #define __RENDER_PARTICLES__
 
+#include "framebufferObject.h"
+
 class ParticleRenderer
 {
     public:
@@ -52,6 +54,12 @@ class ParticleRenderer
             m_window_w = w;
             m_window_h = h;
         }
+		void calcDepth();
+		void blurDepth();
+		void drawQuad();
+		void displayTexture();
+		void bindTexture(GLuint mProg, const char *name, GLuint tex, GLenum target, GLint unit);
+		GLuint createTexture(GLenum target, int w, int h, GLint internalformat, GLenum format);
 
     protected: // methods
         void _initGL();
@@ -68,9 +76,17 @@ class ParticleRenderer
         int m_window_w, m_window_h;
 
         GLuint m_program;
+		GLuint m_blurProg;
+		GLuint m_displayTexProg;
 
         GLuint m_vbo;
         GLuint m_colorVBO;
+
+		GLuint m_depthTex;
+		int m_bufferSize;
+		float m_blurRadius;
+		bool m_renderSurface;
+		FramebufferObject *m_depthFbo;
 };
 
 #endif //__ RENDER_PARTICLES__

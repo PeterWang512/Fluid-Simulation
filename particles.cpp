@@ -56,8 +56,8 @@
 #define MAX_EPSILON_ERROR 5.00f
 #define THRESHOLD         0.30f
 
-#define GRID_SIZE       64
-#define NUM_PARTICLES   16384
+#define GRID_SIZE       128
+#define NUM_PARTICLES   60000
 
 const uint width = 640, height = 480;
 
@@ -90,12 +90,12 @@ int numIterations = 0; // run until exit
 // simulation parameters
 float timestep = 0.5f;
 float damping = 1.0f;
-float gravity = 0.0003f;
+float gravity = 0.0006f;
 int iterations = 1;
-int ballr = 10;
+int ballr = 22;
 
 float collideSpring = 0.5f;;
-float collideDamping = 0.02f;;
+float collideDamping = 0.01f;;
 float collideShear = 0.1f;
 float collideAttraction = 0.0f;
 
@@ -133,7 +133,8 @@ void initParticleSystem(int numParticles, uint3 gridSize, bool bUseOpenGL)
     if (bUseOpenGL)
     {
         renderer = new ParticleRenderer;
-        renderer->setParticleRadius(psystem->getParticleRadius());
+        renderer->setParticleRadius(psystem->getParticleRadius() * 1.3f);
+		//renderer->setParticleRadius(1.0f / 40.0f);
         renderer->setColorBuffer(psystem->getColorBuffer());
     }
 

@@ -80,13 +80,39 @@ extern "C"
     void update_position(float *sortedPos, float *delta_p, uint numParticles);
 
 
+	void first_update_velocity(float delta_t,
+						 float *oldPos,
+						 float *sortedPos,
+						 float *vel,
+						 uint  *gridParticleIndex,    // input: sorted particle indices
+						 uint   numParticles);
+
+
+	void vorticity(float delta_t,
+		float *oldPos,
+		float *sortedPos,
+		float *sortedVel,
+		float *vel,
+		uint  *gridParticleIndex,    // input: sorted particle indices
+		uint  *cellStart,
+		uint  *cellEnd,
+		uint   numParticles);
+
+
     void update_velocity(float delta_t,
     		             float *oldPos,
     		             float *sortedPos,
+						 float *sortedVel,
     		             float *vel,
     		             uint  *gridParticleIndex,    // input: sorted particle indices
+						 uint  *cellStart,
+		                 uint  *cellEnd,
     		             uint   numParticles);
 
+
+	void final_update_velocity(float *sortedVel,
+							   float *vel,
+							   uint   numParticles);
 
     void sortParticles(uint *dGridParticleHash, uint *dGridParticleIndex, uint numParticles);
 

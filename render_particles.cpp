@@ -33,7 +33,14 @@ ParticleRenderer::ParticleRenderer()
       m_particleRadius(0.125f * 0.5f),
       m_program(0),
       m_vbo(0),
-      m_colorVBO(0)
+      m_colorVBO(0),
+	  m_blurRadius(1.0f),
+	  m_depthTex(0),
+	  m_bufferSize(256),
+	  m_blurProg(0),
+	  m_displayTexProg(0),
+	  m_renderSurface(false),
+	  m_depthFbo(0)
 {
     _initGL();
 }
@@ -41,6 +48,8 @@ ParticleRenderer::ParticleRenderer()
 ParticleRenderer::~ParticleRenderer()
 {
     m_pos = 0;
+	glDeleteTextures(1, &m_depthTex);
+	delete m_depthFbo;
 }
 
 void ParticleRenderer::setPositions(float *pos, int numParticles)
@@ -110,14 +119,23 @@ void ParticleRenderer::display(DisplayMode mode /* = PARTICLE_POINTS */)
             glDepthMask(GL_TRUE);
             glEnable(GL_DEPTH_TEST);
 
-            glUseProgram(m_program);
-            glUniform1f(glGetUniformLocation(m_program, "pointScale"), m_window_h / tanf(m_fov*0.5f*(float)M_PI/180.0f));
-            glUniform1f(glGetUniformLocation(m_program, "pointRadius"), m_particleRadius);
+			if (m_renderSurface) {
+				calcDepth();
+				blurDepth();
+				displayTexture();
+			}
+			else {
+				glUseProgram(m_program);
+				glUniform1f(glGetUniformLocation(m_program, "pointScale"), m_window_h / tanf(m_fov*0.5f*(float)M_PI / 180.0f));
+				glUniform1f(glGetUniformLocation(m_program, "pointRadius"), m_particleRadius);
 
-            glColor3f(1, 1, 1);
-            _drawPoints();
+				glColor3f(1, 1, 1);
+				_drawPoints();
 
-            glUseProgram(0);
+				glUseProgram(0);
+			}
+
+            
             glDisable(GL_POINT_SPRITE_ARB);
             break;
     }
@@ -162,8 +180,112 @@ void ParticleRenderer::_initGL()
 {
     m_program = _compileProgram(vertexShader, spherePixelShader);
 
+	if (m_renderSurface) {
+		// load shader programs
+		m_program = _compileProgram(vertexShader, depthShader);
+		m_blurProg = _compileProgram(passThruVS, blurPS);
+		m_displayTexProg = _compileProgram(passThruVS, texture2DPS);
+
+		// create depth texture buffer
+		m_depthTex = createTexture(GL_TEXTURE_2D, m_bufferSize, m_bufferSize, GL_DEPTH_COMPONENT24_ARB, GL_DEPTH_COMPONENT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+		m_depthFbo = new FramebufferObject();
+		m_depthFbo->AttachTexture(GL_TEXTURE_2D, m_depthTex, GL_DEPTH_ATTACHMENT_EXT);
+		m_depthFbo->IsValid();
+	}
+
 #if !defined(__APPLE__) && !defined(MACOSX)
     glClampColorARB(GL_CLAMP_VERTEX_COLOR_ARB, GL_FALSE);
     glClampColorARB(GL_CLAMP_FRAGMENT_COLOR_ARB, GL_FALSE);
 #endif
+}
+
+GLuint ParticleRenderer::createTexture(GLenum target, int w, int h, GLint internalformat, GLenum format)
+{
+	GLuint texid;
+	glGenTextures(1, &texid);
+	glBindTexture(target, texid);
+
+	glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+	glTexImage2D(target, 0, internalformat, w, h, 0, format, GL_FLOAT, 0);
+	return texid;
+}
+
+void ParticleRenderer::calcDepth()
+{
+	m_depthFbo->Bind();
+	glViewport(0, 0, m_bufferSize, m_bufferSize);
+	glUseProgram(m_program);
+	bindTexture(m_program, "depthTex", m_depthTex, GL_TEXTURE_2D, 0);
+	glUniform1f(glGetUniformLocation(m_program, "pointScale"), m_window_h / tanf(m_fov*0.5f*(float)M_PI / 180.0f));
+	glUniform1f(glGetUniformLocation(m_program, "pointRadius"), m_particleRadius);
+	glDisable(GL_DEPTH_TEST);
+	glColor3f(1, 1, 1);
+	_drawPoints();
+	glUseProgram(0);
+	m_depthFbo->Disable();
+}
+
+void ParticleRenderer::blurDepth()
+{
+	glUseProgram(m_blurProg);
+	bindTexture(m_blurProg, "tex", m_depthTex, GL_TEXTURE_2D, 0);
+	glUniform2f(glGetUniformLocation(m_blurProg, "texelSize"), 1.0f / (float)m_bufferSize, 1.0f / (float)m_bufferSize);
+	glUniform1f(glGetUniformLocation(m_blurProg, "blurRadius"), m_blurRadius);
+	glDisable(GL_DEPTH_TEST);
+	drawQuad();
+	glUseProgram(0);
+}
+
+void ParticleRenderer::displayTexture()
+{
+	glViewport(0, 0, m_window_w, m_window_h);
+	glDisable(GL_DEPTH_TEST);
+	glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+	glEnable(GL_BLEND);
+	glUseProgram(m_displayTexProg);
+	bindTexture(m_displayTexProg, "tex", m_depthTex, GL_TEXTURE_2D, 0);
+	drawQuad();
+	glUseProgram(0);
+	glDisable(GL_BLEND);
+}
+
+void ParticleRenderer::bindTexture(GLuint mProg, const char *name, GLuint tex, GLenum target, GLint unit)
+{
+	GLint loc = glGetUniformLocation(mProg, name);
+
+	if (loc >= 0)
+	{
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(target, tex);
+		glUseProgram(mProg);
+		glUniform1i(loc, unit);
+		glActiveTexture(GL_TEXTURE0);
+	}
+	else
+	{
+#if _DEBUG
+		fprintf(stderr, "Error binding texture '%s'\n", name);
+#endif
+	}
+}
+
+void ParticleRenderer::drawQuad()
+{
+	glBegin(GL_QUADS);
+	glTexCoord2f(0.0f, 0.0f);
+	glVertex2f(-1.0f, -1.0f);
+	glTexCoord2f(1.0f, 0.0f);
+	glVertex2f(1.0f, -1.0f);
+	glTexCoord2f(1.0f, 1.0f);
+	glVertex2f(1.0f, 1.0f);
+	glTexCoord2f(0.0f, 1.0f);
+	glVertex2f(-1.0f, 1.0f);
+	glEnd();
 }

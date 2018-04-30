@@ -346,9 +346,16 @@ void deltaPCell(float  *lambda,
 				float li = FETCH(lambda, index);
 				float lj = FETCH(lambda, j);
 
+				//Tensile instability
+				float delta_q = params.delta_q;
+				float k = params.k;
+				float n = params.n;
+				float kernel = pow(h - dist, 3) / pow(h - delta_q, 3);
+				float s_corr = -k * pow(kernel, n);
+
 				if (dist <= h) {
 					// calculate gradient
-					*dp += - (li+lj) * 45.0f / (CUDART_PI_F * pow(h, 6)) * pow(h-dist, 2) * unit;
+					*dp += - (li + lj + s_corr) * 45.0f / (CUDART_PI_F * pow(h, 6)) * pow(h-dist, 2) * unit;
 				}
         	}
         }
@@ -540,15 +547,16 @@ void update_positionD(float4 *oldPos, float3 *delta_p, uint numParticles)
 	oldPos[index] = make_float4(pos + dp, 1.0f);
 }
 
+
 __global__
-void update_velocityD(float   delta_t,
-				     float4 *oldPos,
-				     float4 *sortedPos,
-				     float4 *vel,
-				     uint   *gridParticleIndex,    // input: sorted particle indices
-				     uint    numParticles)
+void first_update_velocityD(float   delta_t,
+							float4 *oldPos,
+							float4 *sortedPos,
+							float4 *vel,
+							uint   *gridParticleIndex,    // input: sorted particle indices
+							uint    numParticles)
 {
-	uint index = __mul24(blockIdx.x,blockDim.x) + threadIdx.x;
+	uint index = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
 	if (index >= numParticles) return;
 
@@ -558,6 +566,224 @@ void update_velocityD(float   delta_t,
 	uint originalIndex = gridParticleIndex[index];
 	float3 o_pos = make_float3(FETCH(oldPos, originalIndex));
 	vel[originalIndex] = make_float4((pos - o_pos) / delta_t, 0.0f);
+}
+
+
+__device__
+void vorticityCell(int3 gridPos,
+	uint index,
+	float3 pos,
+	float3 vel,
+	float4 *sortedPos,
+	float4 *sortedVel,
+	float4 *oldVel,
+	uint *gridParticleIndex,
+	uint *cellStart,
+	uint *cellEnd,
+	float3 *w,
+	float3 *avg_pos,
+	float *count)
+{
+	uint gridHash = calcGridHash(gridPos);
+
+	// get start of bucket for this cell
+	uint startIndex = FETCH(cellStart, gridHash);
+
+	if (startIndex != 0xffffffff)          // cell is not empty
+	{
+		// iterate over particles in this cell
+		uint endIndex = FETCH(cellEnd, gridHash);
+
+		for (uint j = startIndex; j<endIndex; j++)
+		{
+			float3 pos2 = make_float3(FETCH(sortedPos, j));
+			*avg_pos += pos2;
+			*count += 1.0f;
+
+			if (j != index) {
+				uint originalIndex = gridParticleIndex[index];
+				float3 vel2 = make_float3(FETCH(oldVel, originalIndex));
+
+				// relative position
+				float3 relPos = pos - pos2;
+				float dist = length(relPos);
+				float3 unit = relPos / dist;
+
+				// relative velocity
+				float3 relVel = vel - vel2;
+
+				float h = params.h;
+
+				if (dist <= h) {
+					// calculate gradient
+					float3 grad = 45.0f / (CUDART_PI_F * pow(h, 6)) * pow(h - dist, 2) * unit;
+					*w += relVel * grad;
+				}
+			}
+		}
+	}
+}
+
+
+__global__
+void vorticityD(float   delta_t,
+	float4 *oldPos,
+	float4 *sortedPos,
+	float4 *sortedVel,
+	float4 *oldVel,
+	uint   *gridParticleIndex,    // input: sorted particle indices
+	uint   *cellStart,
+	uint   *cellEnd,
+	uint    numParticles)
+{
+	uint index = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+	if (index >= numParticles) return;
+	// read particle data from sorted arrays
+	float3 pos = make_float3(FETCH(sortedPos, index));
+
+	uint originalIndex = gridParticleIndex[index];
+	float3 vel = make_float3(FETCH(oldVel, originalIndex));
+
+	//	uint originalIndex = gridParticleIndex[index];
+	//	float3 o_pos = make_float3(FETCH(oldPos, originalIndex));
+	//	oldVel[originalIndex] = make_float4((pos - o_pos) / delta_t, 0.0f);
+
+	// get address in grid
+	int3 gridPos = calcGridPos(pos);
+
+	float3 w = make_float3(0.0f);
+	float3 avg_pos = make_float3(0.0f);
+	float count = 0.0f;
+
+	for (int z = -1; z <= 1; z++)
+	{
+		for (int y = -1; y <= 1; y++)
+		{
+			for (int x = -1; x <= 1; x++)
+			{
+				int3 neighbourPos = gridPos + make_int3(x, y, z);
+				vorticityCell(neighbourPos, index, pos, vel, sortedPos, sortedVel, oldVel,
+					gridParticleIndex, cellStart, cellEnd, &w, &avg_pos, &count);
+			}
+		}
+	}
+
+	avg_pos /= count;
+	float3 eta = avg_pos - pos;
+	float3 eta_unit = eta / length(eta);
+	float3 force = params.vor * cross(eta_unit, w);
+
+	sortedVel[originalIndex] = make_float4(vel + force*delta_t, 0.0f);
+}
+
+
+__device__
+void update_velCell(int3 gridPos,
+				    uint index,
+		            float3 pos,
+					float3 vel,
+					float4 *sortedPos,
+					float4 *sortedVel,
+					float4 *oldVel,
+					uint *gridParticleIndex,
+					uint *cellStart,
+					uint *cellEnd,
+                    float3 *vis_vel)
+{
+	uint gridHash = calcGridHash(gridPos);
+
+	// get start of bucket for this cell
+	uint startIndex = FETCH(cellStart, gridHash);
+
+	if (startIndex != 0xffffffff)          // cell is not empty
+	{
+		// iterate over particles in this cell
+		uint endIndex = FETCH(cellEnd, gridHash);
+
+		for (uint j = startIndex; j<endIndex; j++)
+		{
+			if (j != index) {
+				float3 pos2 = make_float3(FETCH(sortedPos, j));
+				uint originalIndex = gridParticleIndex[index];
+				float3 vel2 = make_float3(FETCH(oldVel, originalIndex));
+
+				// relative position
+				float3 relPos = pos - pos2;
+				float dist = length(relPos);
+				float3 unit = relPos / dist;
+
+				// relative velocity
+				float3 relVel = vel - vel2;
+
+				float h = params.h;
+
+				if (dist <= h) {
+					// calculate gradient
+					float kernel = params.vis * 315.0f / (64.0f * CUDART_PI_F * pow(h, 9)) * pow(h*h - dist*dist, 3);
+					*vis_vel += kernel * relVel;
+				}
+			}
+		}
+	}
+}
+
+
+__global__
+void update_velocityD(float   delta_t,
+				     float4 *oldPos,
+				     float4 *sortedPos,
+	                 float4 *sortedVel,
+				     float4 *oldVel,
+				     uint   *gridParticleIndex,    // input: sorted particle indices
+	                 uint   *cellStart,
+					 uint   *cellEnd,
+				     uint    numParticles)
+{
+	uint index = __mul24(blockIdx.x,blockDim.x) + threadIdx.x;
+
+	if (index >= numParticles) return;
+	// read particle data from sorted arrays
+	float3 pos = make_float3(FETCH(sortedPos, index));
+
+	uint originalIndex = gridParticleIndex[index];
+	float3 vel = make_float3(FETCH(oldVel, originalIndex));
+
+//	uint originalIndex = gridParticleIndex[index];
+//	float3 o_pos = make_float3(FETCH(oldPos, originalIndex));
+//	oldVel[originalIndex] = make_float4((pos - o_pos) / delta_t, 0.0f);
+
+	// get address in grid
+	int3 gridPos = calcGridPos(pos);
+	float3 vis_vel = make_float3(0.0f);
+
+	float3 w = make_float3(0.0f);
+
+	for (int z = -1; z <= 1; z++)
+	{
+		for (int y = -1; y <= 1; y++)
+		{
+			for (int x = -1; x <= 1; x++)
+			{
+				int3 neighbourPos = gridPos + make_int3(x, y, z);
+				update_velCell(neighbourPos, index, pos, vel, sortedPos, sortedVel, oldVel,
+					gridParticleIndex, cellStart, cellEnd, &vis_vel);
+			}
+		}
+	}
+
+	sortedVel[originalIndex] = make_float4(vel + vis_vel, 0.0f);
+}
+
+__global__
+void final_update_velocityD(float4 *sortedVel,
+						    float4 *oldVel,
+							uint    numParticles)
+{
+	//uint index = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	//if (index >= numParticles) return;
+	for (uint i = 0; i < numParticles; i++)
+		oldVel[i] = FETCH(sortedVel, i);
 }
 
 #endif

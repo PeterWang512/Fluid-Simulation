@@ -52,6 +52,12 @@ struct SimParams
     float h;
     float eps;
     uint numIter;
+	// tensile instability
+	float k;
+	float n;
+	float delta_q;
+	float vis;
+	float vor;
 };
 
 #endif

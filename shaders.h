@@ -11,3 +11,7 @@
 
 extern const char *vertexShader;
 extern const char *spherePixelShader;
+extern const char *passThruVS;
+extern const char *texture2DPS;
+extern const char *blurPS;
+extern const char *depthShader;

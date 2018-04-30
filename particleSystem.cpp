@@ -57,8 +57,8 @@ ParticleSystem::ParticleSystem(uint numParticles, uint3 gridSize, bool bUseOpenG
     m_params.numCells = m_numGridCells;
     m_params.numBodies = m_numParticles;
 
-    m_params.particleRadius = 1.0f / 64.0f;
-    m_params.colliderPos = make_float3(-1.2f, -0.8f, 0.8f);
+    m_params.particleRadius = 1.0f / 75.0f;
+    m_params.colliderPos = make_float3(0.0f, -0.7f, 0.3f);
     m_params.colliderRadius = 0.2f;
 
     m_params.worldOrigin = make_float3(-1.0f, -1.0f, -1.0f);
@@ -67,19 +67,26 @@ ParticleSystem::ParticleSystem(uint numParticles, uint3 gridSize, bool bUseOpenG
     m_params.cellSize = make_float3(cellSize, cellSize, cellSize);
 
     m_params.spring = 0.5f;
-    m_params.damping = 0.02f;
+    m_params.damping = 0.00f;
     m_params.shear = 0.1f;
     m_params.attraction = 0.0f;
-    m_params.boundaryDamping = -0.5f;
+    m_params.boundaryDamping = -0.8f;
 
     m_params.gravity = make_float3(0.0f, -0.0003f, 0.0f);
     m_params.globalDamping = 1.0f;
 
     // new params
-    m_params.rest_density = 40.0f;
-    m_params.h = 3.5f;
-    m_params.eps = 200.0f;
-    m_params.numIter = 1;
+    m_params.rest_density = 20.0;
+    m_params.h = 2.0f;
+    m_params.eps = 5000.0f;
+    m_params.numIter = 20;
+	
+	// tensile instability
+	m_params.delta_q = 0.01f*m_params.h;
+	m_params.k = 0.0003f;
+	m_params.n = 1.0f;
+	m_params.vis = 0.01f;
+	m_params.vor = 1.0f;
 
     _initialize(numParticles);
 }
@@ -326,7 +333,7 @@ ParticleSystem::update(float deltaTime)
 
 
 		// process collisions
-		collide(
+		/*collide(
 			deltaTime,
 			m_dVel,
 			m_dSortedPos,
@@ -334,19 +341,59 @@ ParticleSystem::update(float deltaTime)
 			m_dCellStart,
 			m_dCellEnd,
 			m_numParticles,
-			m_numGridCells);
+			m_numGridCells);*/
 
 		// update positions
 		update_position(m_dSortedPos, delta_p, m_numParticles);
     }
 
+	// process collisions
+	collide(
+		deltaTime,
+		m_dVel,
+		m_dSortedPos,
+		m_dSortedVel,
+		m_dCellStart,
+		m_dCellEnd,
+		m_numParticles,
+		m_numGridCells);
+
+
+	first_update_velocity(deltaTime,
+						  m_dOldPos,
+						  m_dSortedPos,
+						  m_dVel,
+						  m_dGridParticleIndex,
+						  m_numParticles);
+
+	vorticity(deltaTime,
+		m_dOldPos,
+		m_dSortedPos,
+		m_dSortedVel,
+		m_dVel,
+		m_dGridParticleIndex,
+		m_dCellStart,
+		m_dCellEnd,
+		m_numParticles);
+
+	final_update_velocity(m_dSortedVel,
+		m_dVel,
+		m_numParticles);
+
     // update velocity
     update_velocity(deltaTime,
     		        m_dOldPos,
     		        m_dSortedPos,
+					m_dSortedVel,
     		        m_dVel,
     		        m_dGridParticleIndex,
+					m_dCellStart,
+					m_dCellEnd,
     		        m_numParticles);
+
+	final_update_velocity(m_dSortedVel,
+						  m_dVel,
+						  m_numParticles);
 
     // note: do unmap at end here to avoid unnecessary graphics/CUDA context switch
     if (m_bUseOpenGL)
@@ -476,9 +523,9 @@ ParticleSystem::initGrid(uint *size, float spacing, float jitter, uint numPartic
 
                 if (i < numParticles)
                 {
-                    m_hPos[i*4] = (spacing * x) + m_params.particleRadius + (frand()*2.0f-1.0f)*jitter;
-                    m_hPos[i*4+1] = (spacing * y) + m_params.particleRadius + (frand()*2.0f-1.0f)*jitter;
-                    m_hPos[i*4+2] = (spacing * z) + m_params.particleRadius + (frand()*2.0f-1.0f)*jitter;
+                    m_hPos[i*4] = (spacing * x) + m_params.particleRadius -0.5f + (frand()*2.0f-1.0f)*jitter;
+                    m_hPos[i*4+1] = (spacing * y) + m_params.particleRadius -0.5f + (frand()*2.0f-1.0f)*jitter;
+                    m_hPos[i*4+2] = (spacing * z) + m_params.particleRadius -0.5f + (frand()*2.0f-1.0f)*jitter;
                     m_hPos[i*4+3] = 1.0f;
 
                     m_hVel[i*4] = 0.0f;

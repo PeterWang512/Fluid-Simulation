@@ -319,11 +319,68 @@ extern "C"
     }
 
 
+	void first_update_velocity(float delta_t,
+							   float *oldPos,
+							   float *sortedPos,
+							   float *vel,
+							   uint  *gridParticleIndex,    // input: sorted particle indices
+							   uint   numParticles)
+	{
+		// thread per particle
+		uint numThreads, numBlocks;
+		computeGridSize(numParticles, 64, numBlocks, numThreads);
+
+		// execute the kernel
+		first_update_velocityD <<< numBlocks, numThreads >>>(delta_t,
+															 (float4 *)oldPos,
+															 (float4 *)sortedPos,
+															 (float4 *)vel,
+															 gridParticleIndex,
+															 numParticles);
+
+		// check if kernel invocation generated an error
+		getLastCudaError("Kernel execution failed");
+	}
+
+
+	void vorticity(float delta_t,
+				   float *oldPos,
+				   float *sortedPos,
+				   float *sortedVel,
+				   float *vel,
+				   uint  *gridParticleIndex,    // input: sorted particle indices
+				   uint  *cellStart,
+				   uint  *cellEnd,
+				   uint   numParticles)
+	{
+		// thread per particle
+		uint numThreads, numBlocks;
+		computeGridSize(numParticles, 64, numBlocks, numThreads);
+
+		// execute the kernel
+		vorticityD <<< numBlocks, numThreads >>>(delta_t,
+												   (float4 *)oldPos,
+												   (float4 *)sortedPos,
+												   (float4 *)sortedVel,
+												   (float4 *)vel,
+												   gridParticleIndex,
+												   cellStart,
+												   cellEnd,
+												   numParticles);
+
+		// check if kernel invocation generated an error
+		getLastCudaError("Kernel execution failed");
+	}
+
+
     void update_velocity(float delta_t,
 						 float *oldPos,
 						 float *sortedPos,
+						 float *sortedVel,
 						 float *vel,
 						 uint  *gridParticleIndex,    // input: sorted particle indices
+						 uint  *cellStart,
+						 uint  *cellEnd,
 						 uint   numParticles)
     {
     	// thread per particle
@@ -334,13 +391,38 @@ extern "C"
 		update_velocityD<<< numBlocks, numThreads >>>(delta_t,
 				                                      (float4 *)oldPos,
 				                                      (float4 *)sortedPos,
+													  (float4 *)sortedVel,
 				                                      (float4 *)vel,
 				                                      gridParticleIndex,
+													  cellStart,
+													  cellEnd,
 													  numParticles);
 
 		// check if kernel invocation generated an error
 		getLastCudaError("Kernel execution failed");
     }
+
+
+	void final_update_velocity(float *sortedVel,
+							   float *vel,
+							   uint   numParticles)
+	{
+		/*
+		// thread per particle
+		uint numThreads, numBlocks;
+		computeGridSize(numParticles, 64, numBlocks, numThreads);
+		
+
+		// execute the kernel
+		final_update_velocityD <<< 1, 1 >>>((float4 *)sortedVel,
+															   (float4 *)vel,
+															   numParticles);
+
+		// check if kernel invocation generated an error
+		getLastCudaError("Kernel execution failed");
+		*/
+
+	}
 
 
     void sortParticles(uint *dGridParticleHash, uint *dGridParticleIndex, uint numParticles)
