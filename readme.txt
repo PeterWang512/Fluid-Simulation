@@ -1,10 +1,2 @@
-Sample: particles
-Minimum spec: SM 2.0
-
-This sample uses CUDA to simulate and visualize a large set of particles and their physical interaction.  Adding "-particles=<N>" to the command line will allow users to set # of particles for simulation.  This example implements a uniform grid data structure using either atomic operations or a fast radix sort from the Thrust library
-
-Key concepts:
-Graphics Interop
-Data Parallel Algorithms
-Physically-Based Simulation
-Performance Strategies
+This project is based on NVIDIA's particle simulation sample.
+The original particle simulation only handles particle collisions, while inter-molecular interactions, which govern the most intriguing features of water motions, are not implemented. This project provided simulation of incompressibility, viscosity, and vorticity to the source code, and all these simulations are all parallel-computed in GPU.
